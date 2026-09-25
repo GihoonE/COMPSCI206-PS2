@@ -52,6 +52,7 @@ class AllocationOutcome:
     selected_indices: tuple[int, ...]
     capacity_gpu_hours: float
     payments_score_units: dict[int, float]
+    carbon_penalty_per_kg_co2e: float = CARBON_PENALTY_PER_KG_CO2E
 
 
 def all_subsets(n_teams: int) -> Iterable[tuple[int, ...]]:
@@ -63,18 +64,45 @@ def total_demand(teams: Sequence[Team], selected: Sequence[int]) -> float:
     return sum(teams[index].demand_gpu_hours for index in selected)
 
 
-def total_reported_score(teams: Sequence[Team], selected: Sequence[int]) -> float:
-    return sum(teams[index].reported_score for index in selected)
+def reported_score(team: Team, carbon_penalty_per_kg_co2e: float) -> float:
+    """Reported project value minus the announced carbon penalty."""
+
+    return team.reported_value - carbon_penalty_per_kg_co2e * team.emissions_kg_co2e
 
 
-def total_true_score(teams: Sequence[Team], selected: Sequence[int]) -> float:
-    return sum(teams[index].true_score for index in selected)
+def true_score(team: Team, carbon_penalty_per_kg_co2e: float) -> float:
+    """True project value minus the announced carbon penalty."""
+
+    return team.true_value - carbon_penalty_per_kg_co2e * team.emissions_kg_co2e
+
+
+def total_reported_score(
+    teams: Sequence[Team],
+    selected: Sequence[int],
+    carbon_penalty_per_kg_co2e: float = CARBON_PENALTY_PER_KG_CO2E,
+) -> float:
+    return sum(
+        reported_score(teams[index], carbon_penalty_per_kg_co2e)
+        for index in selected
+    )
+
+
+def total_true_score(
+    teams: Sequence[Team],
+    selected: Sequence[int],
+    carbon_penalty_per_kg_co2e: float = CARBON_PENALTY_PER_KG_CO2E,
+) -> float:
+    return sum(
+        true_score(teams[index], carbon_penalty_per_kg_co2e)
+        for index in selected
+    )
 
 
 def best_feasible_subset(
     teams: Sequence[Team],
     capacity_gpu_hours: float = CAPACITY_GPU_HOURS,
     excluded_index: int | None = None,
+    carbon_penalty_per_kg_co2e: float = CARBON_PENALTY_PER_KG_CO2E,
 ) -> tuple[int, ...]:
     """Find the exact highest-reported-score group under the capacity limit.
 
@@ -91,7 +119,12 @@ def best_feasible_subset(
     return max(
         feasible,
         key=lambda subset: (
-            round(total_reported_score(teams, subset), 10),
+            round(
+                total_reported_score(
+                    teams, subset, carbon_penalty_per_kg_co2e
+                ),
+                10,
+            ),
             len(subset),
             tuple(-index for index in subset),
         ),
@@ -99,22 +132,33 @@ def best_feasible_subset(
 
 
 def vcg_allocation(
-    teams: Sequence[Team], capacity_gpu_hours: float = CAPACITY_GPU_HOURS
+    teams: Sequence[Team],
+    capacity_gpu_hours: float = CAPACITY_GPU_HOURS,
+    carbon_penalty_per_kg_co2e: float = CARBON_PENALTY_PER_KG_CO2E,
 ) -> AllocationOutcome:
     """Allocate by reported score and charge each winner's VCG externality."""
 
-    selected = best_feasible_subset(teams, capacity_gpu_hours)
+    selected = best_feasible_subset(
+        teams, capacity_gpu_hours, carbon_penalty_per_kg_co2e=carbon_penalty_per_kg_co2e
+    )
     payments: dict[int, float] = {}
     for winner in selected:
         # Best score available to everyone else if this winner had not participated.
         without_winner = best_feasible_subset(
-            teams, capacity_gpu_hours, excluded_index=winner
+            teams,
+            capacity_gpu_hours,
+            excluded_index=winner,
+            carbon_penalty_per_kg_co2e=carbon_penalty_per_kg_co2e,
         )
-        best_others_without_winner = total_reported_score(teams, without_winner)
+        best_others_without_winner = total_reported_score(
+            teams, without_winner, carbon_penalty_per_kg_co2e
+        )
 
         # The score earned by everyone else in the actual winning group.
         actual_others_score = total_reported_score(
-            teams, tuple(index for index in selected if index != winner)
+            teams,
+            tuple(index for index in selected if index != winner),
+            carbon_penalty_per_kg_co2e,
         )
         payments[winner] = round(
             max(0.0, best_others_without_winner - actual_others_score), 2
@@ -124,6 +168,7 @@ def vcg_allocation(
         selected_indices=selected,
         capacity_gpu_hours=capacity_gpu_hours,
         payments_score_units=payments,
+        carbon_penalty_per_kg_co2e=carbon_penalty_per_kg_co2e,
     )
 
 
@@ -163,12 +208,19 @@ def team_rows(teams: Sequence[Team], outcome: AllocationOutcome) -> list[dict[st
                 "true_value": team.true_value,
                 "reported_value": team.reported_value,
                 "estimated_emissions_kg_co2e": round(team.emissions_kg_co2e, 2),
-                "reported_score": round(team.reported_score, 2),
+                "reported_score": round(
+                    reported_score(team, outcome.carbon_penalty_per_kg_co2e), 2
+                ),
                 "selected": served,
                 "gpu_hours_allocated": team.demand_gpu_hours if served else 0.0,
                 "priority_payment_score_units": payment_units if served else 0.0,
                 "priority_payment_credits": round(
                     payment_units * PRIORITY_CREDITS_PER_SCORE_UNIT, 2
+                )
+                if served
+                else 0.0,
+                "quasi_linear_utility_score_units": round(
+                    team.true_value - payment_units, 2
                 )
                 if served
                 else 0.0,
@@ -182,7 +234,9 @@ def outcome_metrics(teams: Sequence[Team], outcome: AllocationOutcome) -> dict[s
     allocated = total_demand(teams, selected)
     emissions = sum(teams[index].emissions_kg_co2e for index in selected)
     true_value = sum(teams[index].true_value for index in selected)
-    true_score = total_true_score(teams, selected)
+    true_score = total_true_score(
+        teams, selected, outcome.carbon_penalty_per_kg_co2e
+    )
     total_payment = sum(outcome.payments_score_units.values())
     return {
         "mechanism": outcome.mechanism,
@@ -197,6 +251,7 @@ def outcome_metrics(teams: Sequence[Team], outcome: AllocationOutcome) -> dict[s
         "total_priority_payment_credits": round(
             total_payment * PRIORITY_CREDITS_PER_SCORE_UNIT, 2
         ),
+        "carbon_penalty_per_kg_co2e": outcome.carbon_penalty_per_kg_co2e,
     }
 
 

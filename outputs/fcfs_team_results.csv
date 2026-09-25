@@ -1,0 +1,7 @@
+team,gpu_hours_requested,true_value,reported_value,estimated_emissions_kg_co2e,reported_score,selected,gpu_hours_allocated,priority_payment_score_units,priority_payment_credits
+Team A,25,9,9,6.0,6.0,True,25,0.0,0.0
+Team B,20,6,6,4.8,3.6,True,20,0.0,0.0
+Team C,15,3,3,3.6,1.2,True,15,0.0,0.0
+Team D,25,9,9,6.0,6.0,False,0.0,0.0,0.0
+Team E,20,6,6,4.8,3.6,True,20,0.0,0.0
+Team F,15,3,3,3.6,1.2,True,15,0.0,0.0

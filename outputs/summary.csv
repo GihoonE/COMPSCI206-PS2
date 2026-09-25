@@ -1,0 +1,3 @@
+mechanism,selected_teams,teams_served,gpu_hours_used,unused_gpu_hours,total_true_project_value,carbon_adjusted_true_score,total_estimated_emissions_kg_co2e,total_priority_payment_score_units,total_priority_payment_credits
+Random-order FCFS,Team A; Team B; Team E; Team C; Team F,5,95,5.0,27,15.6,22.8,0,0.0
+Carbon-aware VCG allocation,Team A; Team B; Team D; Team E,4,90,10.0,30,19.2,21.6,9.6,96.0

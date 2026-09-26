@@ -1,0 +1,4 @@
+# The model, run_simulation.py, and tests use only the Python standard library.
+# matplotlib is needed only for the notebook's utility plot (preinstalled on Colab)
+# and scripts/make_teaser.py:
+matplotlib

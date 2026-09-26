@@ -10,12 +10,20 @@ observable GPU demand/emissions:
 The mechanism selects the feasible group with the greatest total reported
 score. With six teams, every one of the 2**6 = 64 possible groups is checked.
 Selected teams pay VCG externality prices in non-transferable priority credits.
+
+A team's utility counts its own announced carbon penalty:
+
+    u_i = v_i - 0.5 * e_i - p_i   if selected, else 0
+
+Under this utility, truthful reporting (r_i = v_i) is a dominant strategy (DSIC);
+`misreport_sweep` checks this numerically.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from itertools import combinations
+from itertools import combinations, permutations
+from statistics import mean
 from typing import Iterable, Sequence
 
 CAPACITY_GPU_HOURS = 100.0
@@ -193,6 +201,104 @@ def fcfs_allocation(
     )
 
 
+def team_utility(team: Team, outcome: AllocationOutcome, index: int) -> float:
+    """True value minus own carbon penalty minus payment if selected, else 0."""
+
+    if index not in outcome.selected_indices:
+        return 0.0
+    return (
+        true_score(team, outcome.carbon_penalty_per_kg_co2e)
+        - outcome.payments_score_units.get(index, 0.0)
+    )
+
+
+def misreport_sweep(
+    teams: Sequence[Team],
+    index: int,
+    reports: Iterable[float],
+    capacity_gpu_hours: float = CAPACITY_GPU_HOURS,
+    carbon_penalty_per_kg_co2e: float = CARBON_PENALTY_PER_KG_CO2E,
+) -> list[dict[str, object]]:
+    """Re-run VCG with one team's report changed; everything else stays fixed.
+
+    DSIC holds for this team and these rivals when no row's utility exceeds the
+    utility of the truthful row (report == true_value).
+    """
+
+    rows: list[dict[str, object]] = []
+    for report in reports:
+        changed = list(teams)
+        changed[index] = Team(
+            teams[index].name,
+            teams[index].demand_gpu_hours,
+            teams[index].true_value,
+            report,
+        )
+        outcome = vcg_allocation(
+            changed, capacity_gpu_hours, carbon_penalty_per_kg_co2e
+        )
+        payment = outcome.payments_score_units.get(index, 0.0)
+        rows.append(
+            {
+                "team": teams[index].name,
+                "true_value": teams[index].true_value,
+                "report": report,
+                "truthful": report == teams[index].true_value,
+                "selected": index in outcome.selected_indices,
+                "payment_score_units": payment,
+                "utility_score_units": round(
+                    team_utility(changed[index], outcome, index), 2
+                ),
+            }
+        )
+    return rows
+
+
+def fcfs_all_orders(
+    teams: Sequence[Team], capacity_gpu_hours: float = CAPACITY_GPU_HOURS
+) -> list[dict[str, object]]:
+    """FCFS outcome for every possible arrival order (6! = 720), so no seed is needed."""
+
+    rows = []
+    for order in permutations(range(len(teams))):
+        metrics = outcome_metrics(
+            teams, fcfs_allocation(teams, order, capacity_gpu_hours)
+        )
+        metrics["arrival_order"] = " -> ".join(teams[i].name for i in order)
+        rows.append(metrics)
+    return rows
+
+
+def summarize_fcfs_orders(
+    teams: Sequence[Team], rows: Sequence[dict[str, object]]
+) -> dict[str, object]:
+    """Mean and range of each FCFS metric, and each team's chance of being served."""
+
+    summary: dict[str, object] = {"orders": len(rows)}
+    for key in (
+        "teams_served",
+        "gpu_hours_used",
+        "total_true_project_value",
+        "carbon_adjusted_true_score",
+        "total_estimated_emissions_kg_co2e",
+    ):
+        values = [float(row[key]) for row in rows]
+        summary[key] = {
+            "mean": round(mean(values), 2),
+            "min": min(values),
+            "max": max(values),
+        }
+    summary["service_probability"] = {
+        team.name: round(
+            sum(team.name in str(row["selected_teams"]).split("; ") for row in rows)
+            / len(rows),
+            3,
+        )
+        for team in teams
+    }
+    return summary
+
+
 def team_rows(teams: Sequence[Team], outcome: AllocationOutcome) -> list[dict[str, object]]:
     """One transparent calculation row per team."""
 
@@ -219,11 +325,9 @@ def team_rows(teams: Sequence[Team], outcome: AllocationOutcome) -> list[dict[st
                 )
                 if served
                 else 0.0,
-                "quasi_linear_utility_score_units": round(
-                    team.true_value - payment_units, 2
-                )
-                if served
-                else 0.0,
+                "utility_score_units": round(
+                    team_utility(team, outcome, index), 2
+                ),
             }
         )
     return rows
@@ -266,6 +370,6 @@ def default_example() -> tuple[list[Team], tuple[int, ...]]:
         Team("Team E", 20, true_value=6, reported_value=6),   # Medium
         Team("Team F", 15, true_value=3, reported_value=3),   # Low
     ]
-    # Fixed illustrative random order for reproducibility.
+    # One illustrative draw of the random order; fcfs_all_orders covers all 720 orders.
     arrival_order = (0, 1, 4, 2, 3, 5)
     return teams, arrival_order

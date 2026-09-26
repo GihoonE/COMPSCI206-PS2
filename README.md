@@ -10,8 +10,6 @@
 
 ![Figure 1: demand exceeds capacity; FCFS vs. carbon-aware VCG; outcomes over all 720 FCFS orders; truthful reporting check](colab/figures/teaser.png)
 
-*Figure 1. Caption in [colab/figures/teaser_caption.md](colab/figures/teaser_caption.md). Regenerate with `python colab/scripts/make_teaser.py` (needs matplotlib).*
-
 We compare two rules on the same six teams:
 
 1. **Random-order FCFS (baseline):** teams arrive in a random order, and each full request is served while capacity remains. We compute all 720 orders exactly.
